@@ -1,0 +1,22 @@
+{
+  "name": "betting-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Node.js script for collecting football betting data from API-FOOTBALL.",
+  "main": "betting-data.js",
+  "scripts": {
+    "start": "node betting-data.js",
+    "run:sample": "node betting-data.js --date 2026-03-29 --from 19:00 --to 20:00"
+  },
+  "keywords": [
+    "betting",
+    "football",
+    "api-football",
+    "axios"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.8.4"
+  }
+}

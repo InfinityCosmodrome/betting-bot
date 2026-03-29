@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Run Betting Script",
+      "program": "${workspaceFolder}/betting-data.js",
+      "args": ["--date", "2026-03-29", "--from", "19:00", "--to", "20:00"],
+      "env": {
+        "API_FOOTBALL_KEY": "PUT_YOUR_KEY_HERE"
+      }
+    }
+  ]
+}
