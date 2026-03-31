@@ -7,8 +7,8 @@ loadEnvFile();
 const CONFIG = {
     MIN_CONFIDENCE: 66,
     MIN_VALUE_EDGE: 3.5,
-    MIN_DATA_QUALITY: 4,
-    PARTIAL_STATS_MIN_DATA_QUALITY: 3,
+    MIN_DATA_QUALITY: 2,
+    PARTIAL_STATS_MIN_DATA_QUALITY: 2,
     BALANCED_MAX_RANGE: 8,
     BALANCED_TOP_GAP: 5,
     MIN_WIN_PROBABILITY: 40,
@@ -17,9 +17,14 @@ const CONFIG = {
     ALLOW_FRIENDLIES: false,
     ALLOW_PARTIAL_STATS_FALLBACK: true,
     MAX_SUGGESTIONS: 2,
-    REQUIRE_ODDS: true,
-    REQUIRE_STATS: true,
-    REQUIRE_PREDICTIONS: true,
+    REQUIRE_ODDS: false,
+    REQUIRE_STATS: false,
+    REQUIRE_PREDICTIONS: false,
+    REJECT_BALANCED_PREDICTIONS: false,
+    TIME_WINDOW_GRACE_MINUTES: 15,
+    ALLOWED_FIXTURE_STATUSES: ["NS", "TBD", "PST", "1H", "HT", "2H"],
+    ALLOW_NO_ODDS_SUGGESTIONS: true,
+    NO_ODDS_MIN_CONFIDENCE: 60,
 };
 
 const API_KEY = process.env.API_FOOTBALL_KEY;
@@ -80,7 +85,7 @@ function parseArgs() {
         from: null,
         to: null,
         timezone: "Europe/Athens",
-        limit: 20,
+        limit: 200,
         output: null,
     };
 
@@ -124,7 +129,7 @@ function parseArgs() {
     }
 
     if (!out.date || !out.from || !out.to) {
-        console.error("Usage: node betting-data.js --date 2026-03-29 --from 19:00 --to 20:00 [--timezone Europe/Athens] [--limit 20]");
+        console.error("Usage: node betting-data.js --date 2026-03-29 --from 19:00 --to 20:00 [--timezone Europe/Athens] [--limit 200]");
         process.exit(1);
     }
 
@@ -186,8 +191,9 @@ function inTimeWindow(dateIso, targetDate, fromTime, toTime, timezone) {
     }
 
     const current = timeToMinutes(local.time);
-    const from = timeToMinutes(fromTime);
-    const to = timeToMinutes(toTime);
+    const grace = CONFIG.TIME_WINDOW_GRACE_MINUTES || 0;
+    const from = timeToMinutes(fromTime) - grace;
+    const to = timeToMinutes(toTime) + grace;
 
     return current >= from && current <= to;
 }
@@ -861,7 +867,7 @@ function getMatchLevelRejectionReasons(match) {
         reasons.push("missing odds");
     }
 
-    if (match.prediction && isBalancedPrediction(match)) {
+    if (CONFIG.REJECT_BALANCED_PREDICTIONS && match.prediction && isBalancedPrediction(match)) {
         reasons.push("balanced prediction profile");
     }
 
@@ -1205,6 +1211,31 @@ function pickBestQualifiedCandidates(candidates) {
         });
 }
 
+function pickBestFallbackCandidates(candidates) {
+    const allowedFallbackRejections = new Set([
+        "missing odds for market",
+        "missing implied probability",
+        "confidence below threshold",
+    ]);
+
+    return candidates
+        .filter((candidate) => CONFIG.ALLOW_NO_ODDS_SUGGESTIONS)
+        .filter((candidate) => candidate.confidence >= CONFIG.NO_ODDS_MIN_CONFIDENCE)
+        .filter((candidate) => candidate.rejectionReasons.every((reason) => allowedFallbackRejections.has(reason)))
+        .sort((a, b) => {
+            if (b.confidence !== a.confidence) {
+                return b.confidence - a.confidence;
+            }
+
+            return b.estimatedProbability - a.estimatedProbability;
+        })
+        .map((candidate) => ({
+            ...candidate,
+            selectionMode: "no_odds_test_fallback",
+            warnings: [...new Set([...candidate.warnings, "fallback suggestion without odds/value validation"])],
+        }));
+}
+
 function compactStanding(standing) {
     if (!standing) {
         return null;
@@ -1276,6 +1307,8 @@ function analyzeMatch(match) {
     const matchRejectionReasons = getMatchLevelRejectionReasons(match);
     const candidates = buildMarketCandidates(match);
     const qualifiedCandidates = pickBestQualifiedCandidates(candidates);
+    const fallbackCandidates = pickBestFallbackCandidates(candidates);
+    const suggestedCandidate = qualifiedCandidates[0] || fallbackCandidates[0] || null;
 
     const allMatch = {
         match: `${match.homeTeam.name} vs ${match.awayTeam.name}`,
@@ -1319,7 +1352,7 @@ function analyzeMatch(match) {
         };
     }
 
-    if (qualifiedCandidates.length === 0) {
+    if (!suggestedCandidate) {
         const candidateReasons = [...new Set(candidates.flatMap((candidate) => candidate.rejectionReasons))];
 
         return {
@@ -1338,7 +1371,7 @@ function analyzeMatch(match) {
     return {
         allMatch,
         filteredOutMatch: null,
-        suggestedCandidate: qualifiedCandidates[0],
+        suggestedCandidate,
     };
 }
 
@@ -1421,8 +1454,7 @@ async function main() {
     const filteredFixtures = fixtures
         .filter((fixture) => {
             const status = fixture.fixture?.status?.short;
-            const allowed = ["NS", "TBD", "PST"];
-            return allowed.includes(status);
+            return CONFIG.ALLOWED_FIXTURE_STATUSES.includes(status);
         })
         .filter((fixture) => inTimeWindow(fixture.fixture.date, args.date, args.from, args.to, args.timezone))
         .slice(0, args.limit);
@@ -1493,6 +1525,7 @@ async function main() {
             confidence: bet.confidence,
             reasons: bet.reasons,
             warnings: bet.warnings,
+            selectionMode: bet.selectionMode || "qualified",
         }));
 
     const suggestedMatchSet = new Set(suggestedBets.map((bet) => bet.match));
@@ -1557,7 +1590,4 @@ main().catch((error) => {
     console.error("Fatal error:", error.message);
     process.exit(1);
 });
-
-
-
 
